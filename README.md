@@ -1,20 +1,100 @@
-# LocalRoute
+<p align="center">
+  <img src="build/appicon.png" width="112" alt="LocalRoute icon">
+</p>
 
-LocalRoute 是面向本地开发的跨平台域名路由代理。一个可执行文件同时提供 macOS/Windows GUI 和 CLI。
+<h1 align="center">LocalRoute</h1>
 
-## 使用
+<p align="center">
+  面向本地开发的轻量域名路由代理。一个程序同时提供桌面 GUI 和 CLI，支持 macOS 与 Windows。
+</p>
 
-```bash
-localroute                                      # GUI
-localroute start --config ./localroute.yml      # CLI 前台代理
-localroute check --config ./localroute.yml      # 严格校验 YAML
-localroute routes --config ./localroute.yml     # 查看有效路由
-localroute version
+LocalRoute 将指定开发域名的请求转发到本机或其他测试服务，适合前后端联调、微服务调试、Mock 分流等场景。配置使用 YAML 保存，修改后可即时加载；请求日志只存在内存中。
+
+## 界面预览
+
+### 路由管理
+
+![LocalRoute 路由管理](docs/images/routes.jpg)
+
+### 请求日志
+
+![LocalRoute 请求日志](docs/images/requests.jpg)
+
+> 截图使用 `example.com` 演示数据，不包含真实开发环境域名。
+
+## 特性
+
+- 单一程序同时支持 GUI 和 CLI
+- 根据 Host 将请求转发到不同目标服务
+- 支持按 HTTP 方法、精确路径或路径前缀配置条件规则
+- YAML 配置，可由 GUI 或文本编辑器维护
+- 配置变更自动校验并热加载
+- 路由分组、搜索和启停控制
+- 实时请求日志，最多保留最近 1000 条
+- 请求日志仅保存在内存，不记录请求体、响应体、Cookie 或 Token
+- macOS 监听 80 端口时按需申请管理员授权，应用主体仍以普通用户运行
+- 单实例运行，关闭窗口后可继续保持代理服务
+
+## 工作方式
+
+假设本地前端运行在 `127.0.0.1:3000`：
+
+```text
+浏览器请求 http://app.example.com/
+              │
+              ▼
+      /etc/hosts → 127.0.0.1
+              │
+              ▼
+       LocalRoute :80
+              │
+              ▼
+       127.0.0.1:3000
 ```
 
-GUI 当前包含路由管理、嵌套条件规则、实时请求日志和监听设置。关闭窗口会隐藏应用并保持代理运行；再次启动会唤醒同一实例，可在设置页明确退出。
+LocalRoute 不会自动修改系统 Hosts。使用开发域名前，需要自行将域名解析到 `127.0.0.1`。
 
-## YAML v2 配置
+macOS 示例：
+
+```text
+127.0.0.1 app.example.com api.example.com
+```
+
+## 安装与运行
+
+### macOS
+
+开发阶段可直接构建并打开：
+
+```bash
+wails build
+open build/bin/LocalRoute.app
+```
+
+应用默认不自动启动代理。点击“启动代理”后，如果监听端口为 80，macOS 会弹出管理员授权窗口。授权只用于启动最小端口桥接进程，GUI 和代理核心仍以当前用户运行。
+
+当前开发构建尚未进行 Apple 签名与公证。直接分发时，应将整个 `LocalRoute.app` 压缩为 ZIP，不要只发送内部可执行文件。
+
+### Windows
+
+```powershell
+wails build
+build\bin\LocalRoute.exe
+```
+
+Windows GUI、CLI 和普通端口代理均可构建；80 等低端口的授权启动流程仍在完善中。
+
+## 快速开始
+
+1. 启动本地服务，例如 `127.0.0.1:3000`。
+2. 在 Hosts 中将开发域名指向 `127.0.0.1`。
+3. 打开 LocalRoute，新建路由。
+4. 填写请求域名 `app.example.com`。
+5. 填写默认目标 `http://127.0.0.1:3000`。
+6. 保存配置并点击“启动代理”。
+7. 打开 `http://app.example.com/`。
+
+## YAML 配置
 
 ```yaml
 version: 2
@@ -24,47 +104,112 @@ listener:
 routes:
   - id: local-web
     name: 本地 Web
-    group: 示例
+    group: 前端
     enabled: true
-    host: web.test.example.com
+    host: app.example.com
     target: http://127.0.0.1:3000
     preserveHost: true
     rules:
-      - id: api
-        name: API 请求
+      - id: mock-login
+        name: 登录 Mock
         enabled: true
         priority: 100
         match:
-          methods: [GET, POST]
-          pathPrefix: /api
+          methods: [POST]
+          path: /api/login
         target: http://127.0.0.1:9000
 ```
 
-规则按 `priority` 从高到低匹配，相同优先级按配置顺序匹配，命中第一条后停止；没有规则命中时使用路由默认目标。`match` 必须且只能配置 `path` 或 `pathPrefix` 之一。
+规则按 `priority` 从高到低匹配，相同优先级按配置顺序匹配，命中第一条后停止；没有规则命中时使用路由的默认目标。
 
-保存配置采用临时文件加原子替换。运行时监测文件变化，完整校验并编译新路由表后才替换；无效修改不会影响上一份有效路由。
+每条规则的 `match` 必须且只能配置以下一种路径条件：
 
-配置查找顺序：命令行 `--config`、`LOCALROUTE_CONFIG` 环境变量、当前目录 `localroute.yml`、操作系统用户配置目录。
+- `path`：精确匹配路径
+- `pathPrefix`：匹配路径前缀
 
-## 技术栈
+`methods` 可选；未填写时匹配所有 HTTP 方法。
+
+## CLI
+
+同一个 LocalRoute 程序也可以在终端使用：
+
+```bash
+localroute                                      # 打开 GUI
+localroute start --config ./localroute.yml      # 前台运行代理
+localroute check --config ./localroute.yml      # 校验 YAML 配置
+localroute routes --config ./localroute.yml     # 输出已启用路由
+localroute routes --config ./localroute.yml --json
+localroute version
+```
+
+CLI 使用 80 端口时需要由调用方提供相应系统权限；CLI 不会弹出 GUI 管理员授权窗口。
+
+## 配置文件
+
+配置查找顺序：
+
+1. CLI 的 `--config PATH`
+2. 环境变量 `LOCALROUTE_CONFIG`
+3. 当前目录的 `localroute.yml`
+4. 操作系统用户配置目录
+
+默认用户配置位置：
+
+- macOS：`~/Library/Application Support/LocalRoute/localroute.yml`
+- Windows：`%AppData%\LocalRoute\localroute.yml`
+
+项目开发目录中的 `.app` 会向上查找 `localroute.yml`，方便直接调试本项目构建。
+
+## 请求日志与隐私
+
+请求日志只保存在当前进程内存中：
+
+- 最多 1000 条
+- 退出应用后自动消失
+- 可随时在 GUI 中清空
+- 不写入 YAML、数据库或请求日志文件
+- 不保存请求体、响应体、Cookie 或 Token
+
+记录字段仅包括时间、方法、Host、路径、转发目标、路由/规则标识、状态码、耗时和错误信息。
+
+## 开发
+
+需要：
 
 - Go 1.26+
+- Node.js 20.19+
 - Wails v2.15
-- Vue 3 + TypeScript + Vite
-- YAML v3
-
-请求日志只保存在内存，最多 1000 条，不记录请求体、响应体、Cookie 或 Token。
-
-## 开发与构建
-
-需要 Go 1.26+、Node.js 20.19+：
 
 ```bash
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 go test ./...
+wails dev
+```
+
+生产构建：
+
+```bash
 wails build
 ```
 
-macOS 产物位于 `build/bin/LocalRoute.app`；Windows 构建生成 `build/bin/LocalRoute.exe`。GitHub Actions 会分别在 macOS 与 Windows 原生 Runner 上执行测试和打包。
+主要技术栈：
 
-LocalRoute 当前不修改系统 Hosts，开发域名需要解析到 `127.0.0.1`。默认监听 `127.0.0.1:80`；macOS GUI 在点击启动时申请管理员授权，仅以特权端口桥接进程占用 80，应用主体仍以普通用户运行。Windows 的低端口授权流程尚待完善。
+- Go
+- Wails
+- Vue 3
+- TypeScript
+- Vite
+- YAML v3
+
+GitHub Actions 会分别在 macOS 和 Windows Runner 上执行测试并构建产物。
+
+## 构建产物
+
+- macOS：`build/bin/LocalRoute.app`
+- Windows：`build/bin/LocalRoute.exe`
+
+正式公开分发前，还需要为 macOS 完成代码签名与 Apple 公证，并为 Windows 安装包配置代码签名。
+
+## License
+
+本项目沿用仓库现有许可证，详见 [LICENSE](LICENSE)。
