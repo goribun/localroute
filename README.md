@@ -1,93 +1,70 @@
-# go2rap
+# LocalRoute
 
-在接口方与调用方并行开发时，对于未发布的接口，mock平台有助于提高开发效率；比如 [RAP](https://github.com/thx/RAP)提供的简单强大的API管理及mock功能。
+LocalRoute 是面向本地开发的跨平台域名路由代理。一个可执行文件同时提供 macOS/Windows GUI 和 CLI。
 
-但是在实际使用中并不会将所有的调用都要切到RAP上，而是当前并行开发的部分需要请求RAP，其他的还要请求实际接口；此时，必然会造成不必要的代码入侵，比如在调用mock接口时单独指定地址，或者为mock请求增加注解标记。
+## 使用
 
-go2rap通过简单的反向代理功能解决了mock时的代码入侵：
-
-![flow-char](https://raw.githubusercontent.com/goribun/go2rap/master/doc/flow-char.png)
-
-如上图所示，go2rap监听80端口，发起接口请求首先经过go2rap（需要将接口的host指到本地），然后通过配置信息决定直接请求接口或是请求RAP，然后响应请求结果。
-
-其实，也可以把它当作反向代理使用，把域名指向本地，方便本地调试时取得登陆信息（cookie）。
-
-## 特点 
-
-1. 功能单一，占用本机资源低，大概占用3M左右内存
-
-2. 配置简单，仅需配置go2rap.json
-
-3. 实时生效，修改配置无需重启（处理每次请求都会读取配置文件，简单粗暴，因为本地调试使用无需考虑性能问题，哈哈哈。。。
-
-## 配置
-
-1. 将接口host指向本地
-
-2. 修改配置文件
-
-
-  servers部分配置需要代理的服务，name为名称，host为域名，proxy为服务的ip；如果只作为反向代理，只配置该部分即可
-
-
-```json
- "servers": [
-      {
-        "name": "test-user-api",
-        "host": "test.user.api.lq.wangxs.cn",
-        "proxy": "xxx.xxx.xxx.xxx"
-      },
-      {
-        "name": "rap-user-api",
-        "host": "rap.user.api.lq.wangxs.cn",
-        "proxy": "yyy.yyy.yyy.yyy"
-      },
-      {
-        "name": "local-user-web",
-        "host": "local.user.wangxs.cn",
-        "proxy": "zzz.zzz.zzz.zzz:8080"
-      }
-    ]": [
-      {
-        "name": "test-user-api",
-        "host": "test.user.api.lq.wangxs.cn",
-        "proxy": "nnn.nnn.nnn.nnn"
-      },
-      {
-        "name": "rap-user-api",
-        "host": "rap.user.api.lq.wangxs.cn",
-        "proxy": "mmm.mmm.mmm.mmm"
-      },
-      {
-        "name": "local-user-web",
-        "host": "local.user.wangxs.cn",
-        "proxy": "ppp.ppp.ppp.ppp:8080"
-      }
-    ]
-```
-  
-condition部分，用来配置路径条件，其中serverA为实际api的server name（server部分配置的name），serverB为mock平台的server name，prefixPath用来指定路径前缀，因为可能多个接口项目都使用同一个mock平台，使用一个前缀路径区分；path就是配置路径条件了，可以指定多个，当调用的路径包含在path时就会请求serverB也就是RAP平台。
- 
-```json
-  "conditions": [
-    {
-      "serverA": "test-user-api",
-      "serverB": "rap-user-api",
-      "prefixPath": "/mockjsdata/1",
-      "path": [
-        "/user/vipList"
-      ]
-    },
-    {
-      "serverA": "yy-api",
-      "serverB": "rap-yy-api",
-      "path": [
-        "/activity/getAllList",
-        "/activity/getDetail"
-      ]
-    }
-  ]
+```bash
+localroute                                      # GUI
+localroute start --config ./localroute.yml      # CLI 前台代理
+localroute check --config ./localroute.yml      # 严格校验 YAML
+localroute routes --config ./localroute.yml     # 查看有效路由
+localroute version
 ```
 
+GUI 当前包含路由管理、嵌套条件规则、实时请求日志和监听设置。关闭窗口会隐藏应用并保持代理运行；再次启动会唤醒同一实例，可在设置页明确退出。
 
+## YAML v2 配置
 
+```yaml
+version: 2
+listener:
+  address: 127.0.0.1
+  port: 80
+routes:
+  - id: local-web
+    name: 本地 Web
+    group: 示例
+    enabled: true
+    host: web.test.example.com
+    target: http://127.0.0.1:3000
+    preserveHost: true
+    rules:
+      - id: api
+        name: API 请求
+        enabled: true
+        priority: 100
+        match:
+          methods: [GET, POST]
+          pathPrefix: /api
+        target: http://127.0.0.1:9000
+```
+
+规则按 `priority` 从高到低匹配，相同优先级按配置顺序匹配，命中第一条后停止；没有规则命中时使用路由默认目标。`match` 必须且只能配置 `path` 或 `pathPrefix` 之一。
+
+保存配置采用临时文件加原子替换。运行时监测文件变化，完整校验并编译新路由表后才替换；无效修改不会影响上一份有效路由。
+
+配置查找顺序：命令行 `--config`、`LOCALROUTE_CONFIG` 环境变量、当前目录 `localroute.yml`、操作系统用户配置目录。
+
+## 技术栈
+
+- Go 1.26+
+- Wails v2.15
+- Vue 3 + TypeScript + Vite
+- YAML v3
+
+请求日志只保存在内存，最多 1000 条，不记录请求体、响应体、Cookie 或 Token。
+
+## 开发与构建
+
+需要 Go 1.26+、Node.js 20.19+：
+
+```bash
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+go test ./...
+wails build
+```
+
+macOS 产物位于 `build/bin/LocalRoute.app`；Windows 构建生成 `build/bin/LocalRoute.exe`。GitHub Actions 会分别在 macOS 与 Windows 原生 Runner 上执行测试和打包。
+
+LocalRoute 当前不修改系统 Hosts，开发域名需要解析到 `127.0.0.1`。默认监听 `127.0.0.1:80`；macOS GUI 在点击启动时申请管理员授权，仅以特权端口桥接进程占用 80，应用主体仍以普通用户运行。Windows 的低端口授权流程尚待完善。

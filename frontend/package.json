@@ -1,0 +1,10 @@
+{
+  "name": "localroute-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {"dev":"vite","build":"vue-tsc --noEmit && vite build && node scripts/fix-wails-index.mjs"},
+  "dependencies": {"vue":"3.5.30"},
+  "devDependencies": {"@vitejs/plugin-vue":"6.0.8","vite":"7.1.12","typescript":"5.9.3","vue-tsc":"2.2.12"},
+  "engines": {"node":">=20.19"}
+}

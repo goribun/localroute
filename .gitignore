@@ -1,2 +1,10 @@
 .DS_Store
-.idea
+.idea/
+build/bin/
+frontend/dist/
+frontend/node_modules/
+frontend/wailsjs/
+localroute.yml
+go2rap
+LocalRoute
+/rap

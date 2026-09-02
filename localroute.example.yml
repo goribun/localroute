@@ -1,0 +1,20 @@
+version: 2
+listener:
+  address: 127.0.0.1
+  port: 80
+routes:
+  - id: local-web
+    name: 本地 Web
+    group: 示例
+    enabled: true
+    host: web.test.example.com
+    target: http://127.0.0.1:3000
+    preserveHost: true
+    rules:
+      - id: api
+        name: API 请求
+        enabled: true
+        priority: 100
+        match:
+          pathPrefix: /api
+        target: http://127.0.0.1:9000
