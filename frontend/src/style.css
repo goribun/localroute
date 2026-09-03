@@ -156,6 +156,7 @@ td input[type="checkbox"] { accent-color: #34a866; }
 .advanced[open] summary { margin-bottom: 10px; }
 .advanced p { margin: -3px 0 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
 .drawer > footer { height: 45px; flex: 0 0 45px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); }
+.delete-confirm { display: flex; align-items: center; gap: 6px; color: #b4232d; font-size: 10px; }
 
 @media (max-width: 900px) { .shell { grid-template-columns: 164px minmax(0, 1fr); } .backdrop { left: 164px; } .drawer { width: 310px; } }
 
