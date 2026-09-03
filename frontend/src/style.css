@@ -132,6 +132,7 @@ td input[type="checkbox"] { accent-color: #34a866; }
 .settings input, .form input, .rule input { height: 28px; padding: 0 7px; border: 1px solid #c9c9cd; border-radius: 5px; outline: 0; }
 .settings p { margin: 0 0 24px; color: var(--muted); font-size: 10px; }
 .path { display: block; padding: 10px; border: 1px solid var(--soft-line); border-radius: 5px; background: #f7f7f8; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.config-file-actions { display: flex; gap: 8px; margin: -14px 0 24px; }
 .settings-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
 .backdrop { position: fixed; inset: 0 0 0 188px; z-index: 5; display: flex; justify-content: flex-end; background: transparent; pointer-events: none; }

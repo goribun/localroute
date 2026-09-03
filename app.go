@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -142,6 +143,57 @@ func (a *App) Quit() {
 
 func (a *App) String() string { return fmt.Sprintf("LocalRoute %s", version) }
 
+func (a *App) importConfig() (map[string]any, error) {
+	if a.ctx == nil {
+		return nil, errors.New("application is not ready")
+	}
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "导入 LocalRoute 配置",
+		Filters: []runtime.FileFilter{{
+			DisplayName: "YAML 配置 (*.yml, *.yaml)",
+			Pattern:     "*.yml;*.yaml",
+		}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		return map[string]any{"cancelled": true}, nil
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"cancelled": false, "config": cfg}, nil
+}
+
+func (a *App) exportConfig(cfg config.Config) (map[string]any, error) {
+	if a.ctx == nil {
+		return nil, errors.New("application is not ready")
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "导出 LocalRoute 配置",
+		DefaultFilename: config.FileName,
+		Filters: []runtime.FileFilter{{
+			DisplayName: "YAML 配置 (*.yml, *.yaml)",
+			Pattern:     "*.yml;*.yaml",
+		}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		return map[string]any{"cancelled": true}, nil
+	}
+	if err := config.Save(path, cfg); err != nil {
+		return nil, err
+	}
+	return map[string]any{"cancelled": false, "path": path}, nil
+}
+
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	write := func(value any) {
@@ -169,6 +221,25 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		write(map[string]bool{"ok": true})
+	case "POST /api/config/import":
+		result, err := a.importConfig()
+		if err != nil {
+			fail(err)
+			return
+		}
+		write(result)
+	case "POST /api/config/export":
+		var cfg config.Config
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			fail(err)
+			return
+		}
+		result, err := a.exportConfig(cfg)
+		if err != nil {
+			fail(err)
+			return
+		}
+		write(result)
 	case "GET /api/status":
 		write(a.Status())
 	case "GET /api/requests":
