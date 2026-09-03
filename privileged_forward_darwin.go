@@ -22,8 +22,10 @@ func startPrivilegedPortForward(listen, target string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("localroute-forward-%d.pid", os.Getuid()))
-	_ = os.Remove(pidFile)
+	pidFile := privilegedForwardPIDFile()
+	if err := stopExistingPrivilegedPortForward(pidFile); err != nil {
+		return 0, fmt.Errorf("stop previous privileged port forward: %w", err)
+	}
 	command := strings.Join([]string{shellQuote(executable), "_forward", "--listen", shellQuote(listen), "--target", shellQuote(target), "--uid", strconv.Itoa(os.Getuid()), "--pid-file", shellQuote(pidFile), ">/tmp/localroute-forward.log 2>&1 &"}, " ")
 	authorize := exec.Command("osascript",
 		"-e", "on run argv",
@@ -54,6 +56,54 @@ func stopPrivilegedPortForward(pid int) error {
 		return err
 	}
 	return process.Signal(os.Interrupt)
+}
+
+func privilegedForwardPIDFile() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("localroute-forward-%d.pid", os.Getuid()))
+}
+
+func cleanupPrivilegedPortForward() error {
+	return stopExistingPrivilegedPortForward(privilegedForwardPIDFile())
+}
+
+func stopExistingPrivilegedPortForward(pidFile string) error {
+	data, err := os.ReadFile(pidFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 1 {
+		_ = os.Remove(pidFile)
+		return nil
+	}
+	command, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		_ = os.Remove(pidFile)
+		return nil
+	}
+	commandLine := string(command)
+	if !strings.Contains(commandLine, " _forward ") || !strings.Contains(commandLine, "--pid-file "+pidFile) {
+		return fmt.Errorf("pid file points to a process that is not a LocalRoute forwarder (pid %d)", pid)
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	if err := process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			_ = os.Remove(pidFile)
+			return nil
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return fmt.Errorf("forwarder pid %d did not stop", pid)
 }
 
 func runPrivilegedForward(args []string) error {

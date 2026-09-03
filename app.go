@@ -94,6 +94,7 @@ func (a *App) Stop() error {
 		_ = stopPrivilegedPortForward(a.forwardPID)
 		a.forwardPID = 0
 	}
+	_ = cleanupPrivilegedPortForward()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return a.manager.Stop(ctx)
