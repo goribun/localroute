@@ -57,7 +57,7 @@ func stopPrivilegedPortForward(pid int) error {
 	if err != nil {
 		return err
 	}
-	return process.Signal(os.Interrupt)
+	return process.Signal(syscall.SIGTERM)
 }
 
 func privilegedForwardPIDFile() string {
@@ -94,18 +94,33 @@ func stopExistingPrivilegedPortForward(pidFile string) error {
 	if err != nil {
 		return err
 	}
-	if err := process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	if waitForProcessExit(pid, time.Second) {
+		_ = os.Remove(pidFile)
+		return nil
+	}
+	if err := process.Signal(syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	if waitForProcessExit(pid, time.Second) {
+		_ = os.Remove(pidFile)
+		return nil
+	}
+	return fmt.Errorf("forwarder pid %d did not stop", pid)
+}
+
+func waitForProcessExit(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
-			_ = os.Remove(pidFile)
-			return nil
+		state, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "state=").Output()
+		if err != nil || strings.HasPrefix(strings.TrimSpace(string(state)), "Z") {
+			return true
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	return fmt.Errorf("forwarder pid %d did not stop", pid)
+	return false
 }
 
 func runPrivilegedForward(args []string) error {
