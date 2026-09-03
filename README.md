@@ -62,6 +62,8 @@ macOS 示例：
 
 ## 安装与运行
 
+可从 [Releases](https://github.com/goribun/localroute/releases) 下载对应系统的测试版程序包，并使用随包提供的 `.sha256` 文件校验下载内容。
+
 ### macOS
 
 开发阶段可直接构建并打开：
@@ -75,6 +77,8 @@ open build/bin/LocalRoute.app
 
 当前开发构建尚未进行 Apple 签名与公证。直接分发时，应将整个 `LocalRoute.app` 压缩为 ZIP，不要只发送内部可执行文件。
 
+首次运行下载的测试版时，如 macOS 阻止打开，可在 Finder 中右键应用并选择“打开”，或前往“系统设置 → 隐私与安全性”允许打开。
+
 ### Windows
 
 ```powershell
@@ -82,7 +86,7 @@ wails build
 build\bin\LocalRoute.exe
 ```
 
-Windows GUI、CLI 和普通端口代理均可构建；80 等低端口的授权启动流程仍在完善中。
+下载的测试版尚未使用商业代码签名证书，Windows SmartScreen 可能显示安全提示，可选择“更多信息 → 仍要运行”。
 
 ## 快速开始
 

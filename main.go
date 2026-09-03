@@ -11,7 +11,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
 
-const version = "0.1.0-dev"
+const version = "0.1.0-beta"
 
 //go:embed all:frontend/dist
 var assets embed.FS

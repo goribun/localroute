@@ -17,6 +17,8 @@ import (
 	"time"
 )
 
+func requiresPrivilegedPortForward(port int) bool { return port < 1024 }
+
 func startPrivilegedPortForward(listen, target string) (int, error) {
 	executable, err := os.Executable()
 	if err != nil {

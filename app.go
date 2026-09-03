@@ -71,7 +71,7 @@ func (a *App) Start() error {
 	if err != nil {
 		return err
 	}
-	if cfg.Listener.Port >= 1024 {
+	if !requiresPrivilegedPortForward(cfg.Listener.Port) {
 		return a.manager.Start()
 	}
 	internal := config.Listener{Address: cfg.Listener.Address, Port: 18080}

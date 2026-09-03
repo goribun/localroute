@@ -1,0 +1,95 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build application
+        run: wails build -clean
+      - name: Ad-hoc sign application
+        run: codesign --force --deep --sign - build/bin/LocalRoute.app
+      - name: Package application
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent build/bin/LocalRoute.app dist/LocalRoute-macOS.zip
+          cd dist
+          shasum -a 256 LocalRoute-macOS.zip > LocalRoute-macOS.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: dist/*
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build application
+        run: wails build -clean
+      - name: Package application
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path build/bin/LocalRoute.exe -DestinationPath dist/LocalRoute-Windows-x64.zip
+          $hash = (Get-FileHash dist/LocalRoute-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  LocalRoute-Windows-x64.zip" | Set-Content dist/LocalRoute-Windows-x64.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/*
+
+  publish:
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" artifacts/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "LocalRoute ${GITHUB_REF_NAME}" \
+            --prerelease \
+            --generate-notes \
+            --notes "首次测试版。包含 macOS 与 Windows x64 程序包。当前安装包未使用商业开发者证书签名，首次运行时系统可能显示安全提示。"
