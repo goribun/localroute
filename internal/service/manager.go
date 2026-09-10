@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -63,13 +64,18 @@ func (m *Manager) StartOn(listener *config.Listener, advertised string) error {
 		m.status.LastError = err.Error()
 		return err
 	}
+	listenerSocket, err := net.Listen("tcp", cfg.Listener.String())
+	if err != nil {
+		m.status.LastError = err.Error()
+		return err
+	}
 	m.server = server
 	if advertised == "" {
 		advertised = cfg.Listener.String()
 	}
 	m.status.Running, m.status.Listen, m.status.StartedAt, m.status.LastError = true, advertised, time.Now(), ""
 	go func() {
-		if err := server.ListenAndServe(); err != nil {
+		if err := server.Serve(listenerSocket); err != nil {
 			m.mu.Lock()
 			if m.server == server {
 				m.status.Running = false
@@ -124,6 +130,15 @@ func (m *Manager) Reload() error {
 	m.status.LastError = ""
 	m.mu.Unlock()
 	return nil
+}
+
+// RecoverConnections preserves the listening socket and loaded routing table.
+func (m *Manager) RecoverConnections() {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.server != nil {
+		m.server.ResetConnections()
+	}
 }
 
 func (m *Manager) Status() Status { m.mu.RLock(); defer m.mu.RUnlock(); return m.status }

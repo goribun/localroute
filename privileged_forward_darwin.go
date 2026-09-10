@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,9 +11,11 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -29,13 +32,18 @@ func startPrivilegedPortForward(listen, target string) (int, error) {
 		return 0, fmt.Errorf("stop previous privileged port forward: %w", err)
 	}
 	command := strings.Join([]string{shellQuote(executable), "_forward", "--listen", shellQuote(listen), "--target", shellQuote(target), "--uid", strconv.Itoa(os.Getuid()), "--pid-file", shellQuote(pidFile), ">/tmp/localroute-forward.log 2>&1 &"}, " ")
-	authorize := exec.Command("osascript",
+	authCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	authorize := exec.CommandContext(authCtx, "osascript",
 		"-e", "on run argv",
 		"-e", "do shell script (item 1 of argv) with administrator privileges",
 		"-e", "end run",
 		command,
 	)
 	if output, err := authorize.CombinedOutput(); err != nil {
+		if authCtx.Err() != nil {
+			return 0, errors.New("管理员授权等待超时，请重新启动代理并完成系统授权")
+		}
 		return 0, fmt.Errorf("administrator authorization failed: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -50,6 +58,14 @@ func startPrivilegedPortForward(listen, target string) (int, error) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return 0, errors.New("privileged port forward did not start; see /tmp/localroute-forward.log")
+}
+
+func resetPrivilegedPortForward(pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return process.Signal(syscall.SIGUSR1)
 }
 
 func stopPrivilegedPortForward(pid int) error {
@@ -143,6 +159,24 @@ func runPrivilegedForward(args []string) error {
 		listener.Close()
 		return fmt.Errorf("drop privileges: %w", err)
 	}
+	// Register before announcing readiness. SIGUSR1 resets connections, retaining
+	// the privileged listening socket so waking does not require authorization.
+	resets := make(chan os.Signal, 1)
+	signal.Notify(resets, syscall.SIGUSR1)
+	defer signal.Stop(resets)
+	var connections sync.Map
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-resets:
+				connections.Range(func(key, _ any) bool { _ = key.(net.Conn).Close(); return true })
+			}
+		}
+	}()
 	if err := os.WriteFile(*pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		listener.Close()
 		return err
@@ -153,7 +187,11 @@ func runPrivilegedForward(args []string) error {
 		if err != nil {
 			return err
 		}
-		go bridgeConnection(client, *target)
+		connections.Store(client, struct{}{})
+		go func() {
+			defer connections.Delete(client)
+			bridgeConnection(client, *target)
+		}()
 	}
 }
 
@@ -164,7 +202,14 @@ func bridgeConnection(client net.Conn, target string) {
 		return
 	}
 	defer upstream.Close()
-	go func() { _, _ = io.Copy(upstream, client); _ = upstream.(*net.TCPConn).CloseWrite() }()
+	go func() {
+		_, err := io.Copy(upstream, client)
+		if err != nil {
+			_ = upstream.Close()
+		} else {
+			_ = upstream.(*net.TCPConn).CloseWrite()
+		}
+	}()
 	_, _ = io.Copy(client, upstream)
 }
 

@@ -34,6 +34,8 @@ LocalRoute 将指定开发域名的请求转发到本机或其他测试服务，
 - 请求日志仅保存在内存，不记录请求体、响应体、Cookie 或 Token
 - macOS 监听 80 端口时按需申请管理员授权，应用主体仍以普通用户运行
 - 单实例运行，关闭窗口后可继续保持代理服务
+- macOS 状态栏 / Windows 系统托盘：查看状态、启停代理、打开窗口和退出
+- macOS / Windows 唤醒后清理休眠前的代理连接，保留监听端口与路由配置
 
 ## 工作方式
 
@@ -75,6 +77,10 @@ open build/bin/LocalRoute.app
 
 应用默认不自动启动代理。点击“启动代理”后，如果监听端口为 80，macOS 会弹出管理员授权窗口。授权只用于启动最小端口桥接进程，GUI 和代理核心仍以当前用户运行。
 
+顶部状态栏的 `LR ●` 表示代理运行中，`LR ○` 表示已停止；菜单显示监听地址或错误信息。关闭主窗口后，仍可通过此菜单管理代理；选择“退出 LocalRoute”才会停止代理并退出应用。
+
+应用通过 [macOS 系统唤醒通知](https://developer.apple.com/documentation/appkit/nsworkspace/didwakenotification) 清理旧连接，后续请求会重新建立连接。正常唤醒保留已授权的端口桥接，不重复请求管理员权限；若桥接进程已退出，则尝试重新启动，可能需要再次授权。恢复失败会在窗口及状态栏菜单显示错误。休眠前进行中的请求或长连接需要由客户端重连。
+
 当前开发构建尚未进行 Apple 签名与公证。直接分发时，应将整个 `LocalRoute.app` 压缩为 ZIP，不要只发送内部可执行文件。
 
 首次运行下载的测试版时，如 macOS 阻止打开，可在 Finder 中右键应用并选择“打开”，或前往“系统设置 → 隐私与安全性”允许打开。
@@ -85,6 +91,12 @@ open build/bin/LocalRoute.app
 wails build
 build\bin\LocalRoute.exe
 ```
+
+运行后，任务栏通知区域会出现 LocalRoute 图标（可能位于“显示隐藏的图标”内）。单击图标打开主窗口，右键菜单可查看状态、启动/停止代理或退出应用。关闭主窗口后代理继续运行；选择“退出 LocalRoute”会停止代理并移除托盘图标。启停期间菜单显示处理状态并禁止重复操作，失败时打开主窗口显示错误。
+
+Windows 通过 [系统电源广播](https://learn.microsoft.com/en-us/windows/win32/power/wm-powerbroadcast) 接收睡眠/休眠恢复事件，清理旧连接。用户主动停止的代理不会因唤醒而自动启动；恢复后客户端需重新发起请求或重连。资源管理器重启后会重新注册托盘图标。
+
+Windows 原生消息循环和唤醒事件测试已纳入 `go test ./...`（仅 Windows 执行）；真实休眠、托盘交互与打包检查步骤见 [Windows 验证清单](docs/windows-validation.md)。
 
 下载的测试版尚未使用商业代码签名证书，Windows SmartScreen 可能显示安全提示，可选择“更多信息 → 仍要运行”。
 

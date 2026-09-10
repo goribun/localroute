@@ -11,3 +11,5 @@ func startPrivilegedPortForward(string, string) (int, error) {
 func stopPrivilegedPortForward(int) error { return nil }
 func cleanupPrivilegedPortForward() error { return nil }
 func runPrivilegedForward([]string) error { return errors.New("privileged forwarding is unavailable") }
+
+func resetPrivilegedPortForward(int) error { return nil }

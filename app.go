@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -17,12 +18,19 @@ import (
 )
 
 type App struct {
-	ctx        context.Context
-	manager    *service.Manager
-	configPath string
-	logger     *slog.Logger
-	requests   *requestlog.Store
-	forwardPID int
+	shuttingDown   bool
+	forwardListen  string
+	forwardTarget  string
+	ctx            context.Context
+	manager        *service.Manager
+	configPath     string
+	logger         *slog.Logger
+	requests       *requestlog.Store
+	forwardPID     int
+	lifecycleMu    sync.Mutex
+	lifecycleError string
+	desktopCancel  context.CancelFunc
+	desktopDone    <-chan struct{}
 }
 
 func NewApp(configPath string, logger *slog.Logger) *App {
@@ -35,7 +43,10 @@ func (a *App) startup(ctx context.Context) {
 	if _, err := os.Stat(a.configPath); os.IsNotExist(err) {
 		_ = config.Save(a.configPath, config.Default())
 	}
-	go a.manager.Watch(ctx)
+	desktopCtx, cancel := context.WithCancel(ctx)
+	a.desktopCancel = cancel
+	a.startDesktop(desktopCtx)
+	go a.manager.Watch(desktopCtx)
 	go func() {
 		ch, cancel := a.requests.Subscribe()
 		defer cancel()
@@ -51,6 +62,13 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(context.Context) {
+	a.lifecycleMu.Lock()
+	a.shuttingDown = true
+	a.lifecycleMu.Unlock()
+	if a.desktopCancel != nil {
+		a.desktopCancel()
+	}
+	a.stopDesktop()
 	_ = a.Stop()
 }
 
@@ -66,7 +84,23 @@ func (a *App) SaveConfig(cfg config.Config) error {
 	return nil
 }
 
-func (a *App) Start() error {
+func (a *App) Start() (err error) {
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	defer func() {
+		if err != nil {
+			a.lifecycleError = err.Error()
+		} else {
+			a.lifecycleError = ""
+		}
+	}()
+	if a.shuttingDown {
+		return errors.New("application is shutting down")
+	}
+	if a.manager.Status().Running && a.lifecycleError == "" {
+		return nil
+	}
+
 	cfg, err := config.Load(a.configPath)
 	if err != nil {
 		return err
@@ -86,10 +120,15 @@ func (a *App) Start() error {
 		return err
 	}
 	a.forwardPID = pid
+	a.forwardListen, a.forwardTarget = cfg.Listener.String(), internal.String()
 	return nil
 }
 
 func (a *App) Stop() error {
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	a.lifecycleError = ""
+
 	if a.forwardPID != 0 {
 		_ = stopPrivilegedPortForward(a.forwardPID)
 		a.forwardPID = 0
@@ -100,7 +139,38 @@ func (a *App) Stop() error {
 	return a.manager.Stop(ctx)
 }
 
-func (a *App) Status() service.Status { return a.manager.Status() }
+func (a *App) Status() service.Status {
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	status := a.manager.Status()
+	if a.lifecycleError != "" {
+		status.LastError = a.lifecycleError
+	}
+	return status
+}
+
+func (a *App) recoverAfterWake() {
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	if a.shuttingDown || !a.manager.Status().Running {
+		return
+	}
+	a.manager.RecoverConnections()
+	if a.forwardPID != 0 {
+		if err := resetPrivilegedPortForward(a.forwardPID); err != nil {
+			a.logger.Warn("port forward unavailable after wake; restarting", "error", err)
+			pid, startErr := startPrivilegedPortForward(a.forwardListen, a.forwardTarget)
+			if startErr != nil {
+				a.lifecycleError = "端口桥接恢复失败，请停止后重新启动代理：" + startErr.Error()
+				a.logger.Error("wake recovery failed", "error", startErr)
+				return
+			}
+			a.forwardPID = pid
+		}
+	}
+	a.lifecycleError = ""
+	a.logger.Info("proxy connections refreshed after wake")
+}
 
 func (a *App) Validate(cfg config.Config) string {
 	if err := cfg.Validate(); err != nil {

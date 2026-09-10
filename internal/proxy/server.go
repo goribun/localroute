@@ -19,12 +19,14 @@ import (
 )
 
 type Server struct {
-	mu         sync.RWMutex
-	httpServer *http.Server
-	table      *router.Table
-	logger     *slog.Logger
-	listen     string
-	requests   *requestlog.Store
+	mu          sync.RWMutex
+	httpServer  *http.Server
+	table       *router.Table
+	logger      *slog.Logger
+	listen      string
+	requests    *requestlog.Store
+	transport   *http.Transport
+	connections map[net.Conn]struct{}
 }
 
 func New(cfg config.Config, logger *slog.Logger, stores ...*requestlog.Store) (*Server, error) {
@@ -40,22 +42,56 @@ func New(cfg config.Config, logger *slog.Logger, stores ...*requestlog.Store) (*
 		store = stores[0]
 	}
 	listen := cfg.Listener.String()
-	s := &Server{table: table, logger: logger, listen: listen, requests: store}
-	s.httpServer = &http.Server{Addr: listen, Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+	s := &Server{table: table, logger: logger, listen: listen, requests: store, transport: http.DefaultTransport.(*http.Transport).Clone(), connections: make(map[net.Conn]struct{})}
+	s.httpServer = &http.Server{Addr: listen, Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, ConnState: s.trackConnection}
 	return s, nil
 }
 
 func (s *Server) ListenAndServe() error {
+	listener, err := net.Listen("tcp", s.listen)
+	if err != nil {
+		return err
+	}
+	return s.Serve(listener)
+}
+
+func (s *Server) Serve(listener net.Listener) error {
 	s.logger.Info("proxy started", "listen", s.listen)
-	err := s.httpServer.ListenAndServe()
+	err := s.httpServer.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 	return err
 }
 
-func (s *Server) Shutdown(ctx context.Context) error { return s.httpServer.Shutdown(ctx) }
-func (s *Server) ListenAddress() string              { return s.listen }
+func (s *Server) Shutdown(ctx context.Context) error {
+	err := s.httpServer.Shutdown(ctx)
+	s.ResetConnections()
+	return err
+}
+
+func (s *Server) trackConnection(conn net.Conn, state http.ConnState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if state == http.StateClosed || state == http.StateHijacked {
+		delete(s.connections, conn)
+	} else {
+		s.connections[conn] = struct{}{}
+	}
+}
+
+// ResetConnections discards sockets from before sleep without releasing the listener.
+func (s *Server) ResetConnections() {
+	s.mu.Lock()
+	connections := s.connections
+	s.connections = make(map[net.Conn]struct{})
+	s.mu.Unlock()
+	for conn := range connections {
+		_ = conn.Close()
+	}
+	s.transport.CloseIdleConnections()
+}
+func (s *Server) ListenAddress() string { return s.listen }
 
 func (s *Server) Reload(cfg config.Config) error {
 	table, err := router.New(cfg)
@@ -86,6 +122,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = s.transport
 	status := http.StatusOK
 	requestError := ""
 	proxy.ModifyResponse = func(response *http.Response) error { status = response.StatusCode; return nil }
