@@ -27,8 +27,15 @@ jobs:
         run: npm ci
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build frontend assets
+        working-directory: frontend
+        run: npm run build
+      - name: Run tests
+        run: go test ./...
+      - name: Vet Go packages
+        run: go vet ./...
       - name: Build application
-        run: wails build -clean
+        run: wails build -clean -s
       - name: Ad-hoc sign application
         run: codesign --force --deep --sign - build/bin/LocalRoute.app
       - name: Package application
@@ -60,8 +67,15 @@ jobs:
         run: npm ci
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build frontend assets
+        working-directory: frontend
+        run: npm run build
+      - name: Run tests
+        run: go test ./...
+      - name: Vet Go packages
+        run: go vet ./...
       - name: Build application
-        run: wails build -clean
+        run: wails build -clean -s
       - name: Package application
         shell: pwsh
         run: |
@@ -78,6 +92,7 @@ jobs:
     needs: [macos, windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
@@ -92,4 +107,4 @@ jobs:
             --title "LocalRoute ${GITHUB_REF_NAME}" \
             --prerelease \
             --generate-notes \
-            --notes "首次测试版。包含 macOS 与 Windows x64 程序包。当前安装包未使用商业开发者证书签名，首次运行时系统可能显示安全提示。"
+            --notes-file RELEASE_NOTES.md

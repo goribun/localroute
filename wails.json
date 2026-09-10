@@ -9,7 +9,7 @@
   "info": {
     "companyName": "LocalRoute",
     "productName": "LocalRoute",
-    "productVersion": "0.1.0",
+    "productVersion": "0.1.1",
     "comments": "Local development routing proxy"
   }
 }
